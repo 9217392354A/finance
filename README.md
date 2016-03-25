@@ -12,15 +12,14 @@ Currenty this is the main repo for my finance scripts. The aim is to build this 
 
 ###GBC:
 
-best score:  0.879595588235
+[Parallel(n_jobs=-1)]: Done 1625 out of 1625 | elapsed: 233.0min finished
 
-best parameters {'n_estimators': 500, 'learning_rate': 0.05, 'max_depth': 2}
+best score:  0.894301470588
+
+best parameters {'n_estimators': 1000, 'learning_rate': 0.1, 'max_depth': 2}
 
 accuracy_score: (train)  0.997242647059
-accuracy_score: (test)  0.904411764706
-
-[Parallel(n_jobs=-1)]: Done 144 out of 144 | elapsed:  9.1min finished
-
+accuracy_score: (test)  0.897058823529
 
 3.8 seconds per fit
 
