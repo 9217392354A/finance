@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from collections import Counter
 import gensim 
+from time import time
 
 
 # #create some features
@@ -180,14 +181,13 @@ def features_extraction(comments,accounts,ammounts,dates,
     
     return features
 
-def create_report(model): 
-    pass        
+     
 
 
 
 
 #load in data
-df_raw = pd.read_csv('new_cats_as of_21_210316.csv')
+df_raw = pd.read_csv('~/Documents/Programs/finance_mk2/machine_learning/new_cats_as of_21_210316.csv')
 
 #rename cols
 cois = [u'date', u'account', u'description', u'payee', u'new_ammounts', u'new_new_cats']
@@ -195,12 +195,11 @@ df = df_raw[cois]
 df.columns =[u'date', u'account', u'description', u'payee', u'ammount',u'category']
 
 
-from sklearn import preprocessing
-from sklearn import ensemble, neighbors, linear_model, grid_search
+from sklearn import ensemble, neighbors, linear_model, grid_search,preprocessing
 from sklearn.cross_validation import train_test_split,_num_samples
 import sklearn
-from sklearn.pipeline import Pipeline
-
+import xgboost as xgb
+from xgboost.sklearn import XGBClassifier
 
 #feature creation
 features = features_extraction(comments=df.description, 
@@ -220,7 +219,7 @@ cat_map = cat_mapper(df.category)
 X = np.array(features.values, dtype=np.float)
 T = np.array(pd.get_dummies(df['category']).values,dtype=np.float)
 t = np.array(df.category.apply(lambda x: cat_map[x]).values,dtype=np.float)
-
+t = t.reshape(len(t),1)
 
 
 #scale data
@@ -246,59 +245,38 @@ X_train, X_test, y_train, y_test = train_test_split(X_scaled,t, test_size=0.2)
 
 
 
-clf = ensemble.RandomForestClassifier()
+#clf = ensemble.RandomForestClassifier()
 #clf = ensemble.ExtraTreesClassifier()
 #clf = ensemble.GradientBoostingClassifier()
+clf = XGBClassifier()
 
 #clf.fit(X_train,y_train)
 
 # specify parameters and distributions to sample from
-param_dist = {    #"learning_rate": [0.05,0.1,0.5], #GBM only
+param_dist = {   "learning_rate": [0.05,0.1,0.5], #GBM only
                   "n_estimators": [60,100,200,500,1000],
-                  "max_depth": [2,10,40,60,80,120,200]
+                  "max_depth": [2,4,6]
                   }
 
 
 
-
 print('performing grid search...')
-grid = grid_search.GridSearchCV(clf,param_dist,n_jobs=-1,cv=10,verbose=1)#,n_iter=10,cv=10)
+grid = grid_search.GridSearchCV(clf,param_dist,n_jobs=-1,verbose=1)#,n_iter=10,cv=10)
+#grid = grid_search.RandomizedSearchCV(clf,param_dist,n_jobs=-1,verbose=1,n_iter=10,cv=10)
 
-grid.fit(X_train,y_train)
+grid.fit(X_train,y_train.ravel())
 
-print 
-print 'best score: ', grid.best_score_
-print 
-print 'best parameters', grid.best_params_
+print grid.best_params_
 
 
 clf_final=grid
-
-if False:
-    print 
-    print 'logloss: (train) ', sklearn.metrics.log_loss(y_train,clf_final.predict(X_train))
-    print 'logloss: (test) ', sklearn.metrics.log_loss(y_test,clf_final.predict(X_test))
-    print 
-    
-if False:
-    print 
-    print 'jackard: (train) ', sklearn.metrics.jaccard_similarity_score(y_train,clf_final.predict(X_train))
-    print 'jackard: (test) ', sklearn.metrics.jaccard_similarity_score(y_test,clf_final.predict(X_test))
-    print 
-    
-if True:
-    print 
-    print 'accuracy_score: (train) ', sklearn.metrics.accuracy_score(y_train,clf_final.predict(X_train))
-    print 'accuracy_score: (test) ', sklearn.metrics.accuracy_score(y_test,clf_final.predict(X_test))
-    print 
+ 
+print '\naccuracy_score: (train) ', sklearn.metrics.accuracy_score(y_train,clf_final.predict(X_train))
+print 'accuracy_score: (test) ', sklearn.metrics.accuracy_score(y_test,clf_final.predict(X_test))
 
 
+print '\ntrain\n'
+print sklearn.metrics.classification_report(y_train,clf_final.predict(X_train))
 
-
-if False:
-    clf = ensemble.GradientBoostingClassifier(n_estimators=2000, 
-                                              learning_rate=.05,
-                                              max_depth=2, 
-                                              random_state=0).fit(X_train,y_train)
-
-    print 'accuracy_score: (test) ', sklearn.metrics.accuracy_score(y_test,clf.predict(X_test))
+print '\ntest\n'
+print sklearn.metrics.classification_report(y_test,clf_final.predict(X_test))
