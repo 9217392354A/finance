@@ -10,6 +10,7 @@ from collections import Counter
 import gensim 
 from time import time
 import logging
+from sklearn.metrics import confusion_matrix
 
 # create logger
 logger = logging.getLogger(__name__)
@@ -43,12 +44,15 @@ def cat_mapper(cats):
     cats_unique = df.sort_values('category').category.drop_duplicates().values
 
     cat_map={}
+    names=[]
     for i,c in enumerate(cats_unique):
         
         cat_map[c]=i
         cat_map[i]=c
         
-    return cat_map
+        names.append(c)
+        
+    return cat_map,names
         
     
         
@@ -195,14 +199,18 @@ def features_extraction(comments,accounts,ammounts,dates,
     return features
 
 
-def fit_model(X,y,optamise=False):
+def fit_model(X,y,names,optamise=False, report=True):
     
     #scale data
     scaler_data = preprocessing.StandardScaler().fit(X)
     X_scaled = scaler_data.transform(X)
 
+    #pca decomposition
+    pca = decomposition.PCA(n_components=10).fit(X)
+    X_scaled_pca = scaler_data.transform(X_scaled)
+
     #test/train split
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled,y, test_size=0.2)
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled_pca,y, test_size=0.2)
 
 
 
@@ -254,19 +262,99 @@ def fit_model(X,y,optamise=False):
     test_score = sklearn.metrics.accuracy_score(y_test,clf_final.predict(X_test))
     #report on accuary of model and 
 
-    logger.info('accuracy_score: (test) '+str(test_score))
-    logger.info('accuracy_score: (train) '+str(train_score))   
+    logger.info('accuracy_score: (test)  {0:.3f}'.format(test_score))
+    logger.info('accuracy_score: (train) {0:.3f}'.format(train_score))   
 
+
+    #print '\ntrain\n',sklearn.metrics.classification_report(y_train, clf_final.predict(X_train))
+
+    #print '\ntest\n',sklearn.metrics.classification_report(y_test, clf_final.predict(X_test))
+
+    if report:
+        class_report(clf_final,y_train,clf_final.predict(X_train), ttype='train')
+        class_report(clf_final,y_test,clf_final.predict(X_test), ttype='test')
+ 
     return clf_final
-"""
-    logger.info( '\ntrain\n',
-        sklearn.metrics.classification_report(  y_train,
-                                                clf_final.predict(X_train)))
 
-    logger.info( '\ntrain\n',
-        sklearn.metrics.classification_report(  y_train,
-                                                clf_final.predict(X_train)))
-"""
+def plot_confusion_matrix(cm, names, title='Confusion matrix', cmap=plt.cm.Blues):
+    plt.imshow(cm, interpolation='nearest', cmap=cmap)
+    plt.title(title)
+    plt.colorbar()
+    tick_marks = np.arange(len(names))
+    plt.xticks(tick_marks, names, rotation=90)
+    plt.yticks(tick_marks, names)
+    plt.tight_layout()
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+     
+
+def class_report(clf,p,t, plot=True,ttype='unknown'):
+    #caculate the number of correct classfications
+    res=t-p
+    per_correct_all = len(res[res==0])*1./len(t)
+    logging.info('fraction of correct classfications {0:.2f}'.format(per_correct_all))
+
+    cats=[]
+    f_correct=[]
+    n_correct=[]
+    n_cat=[]
+
+    print '\nreport type '+ ttype +'\n'+'-'*80
+
+    print '{0:<40} {1:<10} {2:<10} {3:<10}'.format('cat', 'f_correct', 'N_correct','N_total')
+
+    #find faction of correct 
+    for int_cat, name in cat_map.items():
+        if type(int_cat) == int:
+            try:
+
+                w_cat = t==int_cat
+
+                temp_res=t[w_cat]-p[w_cat]
+                print '{0:<40} {1:<10.2f} {2:<10} {3:<10}'.format(name, 
+                                                          len(temp_res[temp_res==0])*1./len(p[w_cat]),
+                                                          len(temp_res[temp_res==0]),
+                                                          len(p[w_cat]))
+
+                n_cat.append(len(p[w_cat]))
+                f_correct.append(len(temp_res[temp_res==0])*1./len(p[w_cat]))
+                n_correct.append(len(temp_res[temp_res==0]))
+                
+            except:
+                
+                w_cat = t==int_cat
+
+                temp_res=t[w_cat]-p[w_cat]
+                print '{0:<40} {1:<10.2f} {2:<10} {3:<10}'.format(name, 
+                                                          0.,
+                                                          0,
+                                                          len(p[w_cat]))
+
+                n_cat.append(len(p[w_cat]))
+                f_correct.append(0)
+                n_correct.append(0.)
+
+    print '\n{0:<40} {1:<10.2f} {2:<10} {3:<10}'.format('ave/total', 
+                                                        np.mean(f_correct), 
+                                                        np.sum(n_correct),
+                                                        np.sum(n_cat))
+
+    print '-'*80+'\n'*2
+    
+    if plot:
+        # Compute confusion matrix
+        cm = confusion_matrix(p,t)
+        np.set_printoptions(precision=2)
+
+        # Normalize the confusion matrix by row (i.e by the number of samples
+        # in each class)
+        cm_normalized = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        fig = plt.figure(figsize=(14,14))
+        plot_confusion_matrix(cm_normalized, names, title='Normalized confusion matrix '+ttype)
+        fig.savefig('/Users/chrisfuller/Desktop/'+ttype+'.jpg')
+
+
+
 
     
 #load in data
@@ -278,7 +366,7 @@ df = df_raw[cois]
 df.columns =[u'date', u'account', u'description', u'payee', u'ammount',u'category']
 
 
-from sklearn import ensemble, neighbors, linear_model, grid_search,preprocessing
+from sklearn import ensemble, neighbors, linear_model, grid_search,preprocessing, decomposition
 from sklearn.cross_validation import train_test_split,_num_samples
 import sklearn
 import xgboost as xgb
@@ -295,7 +383,7 @@ features = features_extraction(comments=df.description,
                                num_topics=20)
 
 #object maps ints to cats or cats to ints
-cat_map = cat_mapper(df.category)
+cat_map, names = cat_mapper(df.category)
 
 
 #sklearn bit
@@ -305,7 +393,7 @@ t = np.array(df.category.apply(lambda x: cat_map[x]).values,dtype=np.float)
 #t = t.reshape(len(t),1)
 
 
-clf = fit_model(X,t,optamise=False)
+clf = fit_model(X,t,names, optamise=False,report=True)
 
 
 
