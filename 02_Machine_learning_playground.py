@@ -9,6 +9,19 @@ import numpy as np
 from collections import Counter
 import gensim 
 from time import time
+import logging
+
+# create logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(asctime)s\t%(levelname)s\t%(message)s",
+                              "%Y-%m-%d %H:%M:%S")
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+
+
 
 
 # #create some features
@@ -165,7 +178,7 @@ def features_extraction(comments,accounts,ammounts,dates,
     features = pd.DataFrame()
     
     if train:
-        print 'creating topic models...'
+        logger.info('creating topic models')
         text_model = create_text_base_models(comments,cats,num_topics)
         
     #extract text features
@@ -181,11 +194,81 @@ def features_extraction(comments,accounts,ammounts,dates,
     
     return features
 
-     
+
+def fit_model(X,y,optamise=False):
+    
+    #scale data
+    scaler_data = preprocessing.StandardScaler().fit(X)
+    X_scaled = scaler_data.transform(X)
+
+    #test/train split
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled,y, test_size=0.2)
 
 
 
+    #clf = sklearn.ensemble.RandomForestClassifier()
+    #clf = sklearn.ensemble.ExtraTreesClassifier()
+    #clf = sklearn.ensemble.GradientBoostingClassifier()
+    clf = xgb.sklearn.XGBClassifier(learning_rate=0.1,silent=1,n_estimators=1000)
 
+
+    if optamise:
+
+        # specify parameters and distributions to sample from
+        param_dist = {  "learning_rate": [0.5,0.1,], #GBM only
+                        "n_estimators": [500,1000],
+                        "max_depth": [2,4]
+                    }
+
+
+        logger.info('performing grid search')
+        #grid = grid_search.RandomizedSearchCV(clf,param_dist,n_jobs=-1,verbose=1,n_iter=10,cv=10)
+
+        grid = grid_search.GridSearchCV(clf,
+                                    param_dist,
+                                    n_jobs=-1,
+                                    verbose=1)#,n_iter=10,cv=10)
+
+        grid.fit(X_train,y_train)
+
+        logger.info('best_params: '+str(grid.best_params_))
+        logger.info('best_score: '+ str(grid.best_score_))
+
+
+        clf_final=grid
+
+
+    
+    else:
+
+
+        logger.info('skipping optamisation phase and fitting model')
+
+        clf.fit(X_train,y_train.ravel())
+
+        clf_final=clf
+
+    
+
+    train_score = sklearn.metrics.accuracy_score(y_train,clf_final.predict(X_train))
+    test_score = sklearn.metrics.accuracy_score(y_test,clf_final.predict(X_test))
+    #report on accuary of model and 
+
+    logger.info('accuracy_score: (test) '+str(test_score))
+    logger.info('accuracy_score: (train) '+str(train_score))   
+
+    return clf_final
+"""
+    logger.info( '\ntrain\n',
+        sklearn.metrics.classification_report(  y_train,
+                                                clf_final.predict(X_train)))
+
+    logger.info( '\ntrain\n',
+        sklearn.metrics.classification_report(  y_train,
+                                                clf_final.predict(X_train)))
+"""
+
+    
 #load in data
 df_raw = pd.read_csv('~/Documents/Programs/finance_mk2/machine_learning/new_cats_as of_21_210316.csv')
 
@@ -219,64 +302,13 @@ cat_map = cat_mapper(df.category)
 X = np.array(features.values, dtype=np.float)
 T = np.array(pd.get_dummies(df['category']).values,dtype=np.float)
 t = np.array(df.category.apply(lambda x: cat_map[x]).values,dtype=np.float)
-t = t.reshape(len(t),1)
+#t = t.reshape(len(t),1)
 
 
-#scale data
-scaler_data = preprocessing.StandardScaler().fit(X)
-scaler_target = preprocessing.StandardScaler().fit(T)
-
-X_scaled = scaler_data.transform(X)
-T_scaled = scaler_target.transform(T)
-
-#test train split
-X_train, X_test, y_train, y_test = train_test_split(X_scaled,t, test_size=0.2)
-
-
-#ml
-#clf = ensemble.RandomForestClassifier(n_estimators=20,n_jobs=4)
-#clf = linear_model.LogisticRegression()
-#clf = linear_model.RidgeClassifierCV()
-#clf = neighbors.KNeighborsClassifier(n_neighbors=1)
-#clf = ensemble.GradientBoostingClassifier(n_estimators=100, 
-#                                          learning_rate=1.0,
-#                                          max_depth=1, 
-#                                          random_state=0)
+clf = fit_model(X,t,optamise=False)
 
 
 
-#clf = ensemble.RandomForestClassifier()
-#clf = ensemble.ExtraTreesClassifier()
-#clf = ensemble.GradientBoostingClassifier()
-clf = XGBClassifier()
-
-#clf.fit(X_train,y_train)
-
-# specify parameters and distributions to sample from
-param_dist = {   "learning_rate": [0.05,0.1,0.5], #GBM only
-                  "n_estimators": [60,100,200,500,1000],
-                  "max_depth": [2,4,6]
-                  }
 
 
 
-print('performing grid search...')
-grid = grid_search.GridSearchCV(clf,param_dist,n_jobs=-1,verbose=1)#,n_iter=10,cv=10)
-#grid = grid_search.RandomizedSearchCV(clf,param_dist,n_jobs=-1,verbose=1,n_iter=10,cv=10)
-
-grid.fit(X_train,y_train.ravel())
-
-print grid.best_params_
-
-
-clf_final=grid
- 
-print '\naccuracy_score: (train) ', sklearn.metrics.accuracy_score(y_train,clf_final.predict(X_train))
-print 'accuracy_score: (test) ', sklearn.metrics.accuracy_score(y_test,clf_final.predict(X_test))
-
-
-print '\ntrain\n'
-print sklearn.metrics.classification_report(y_train,clf_final.predict(X_train))
-
-print '\ntest\n'
-print sklearn.metrics.classification_report(y_test,clf_final.predict(X_test))
