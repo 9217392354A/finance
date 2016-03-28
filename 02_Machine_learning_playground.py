@@ -12,9 +12,18 @@ from time import time
 import logging
 from sklearn.metrics import confusion_matrix
 
+from sklearn import ensemble, neighbors, linear_model, grid_search,preprocessing, decomposition
+from sklearn.cross_validation import train_test_split,_num_samples
+import sklearn
+import xgboost as xgb
+from xgboost.sklearn import XGBClassifier
+from sklearn.pipeline import Pipeline
+
+
+
 # create logger
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s\t%(levelname)s\t%(message)s",
@@ -83,8 +92,8 @@ def money_features(ammounts,accounts):
     #initilise a data frame to hold features
     features=pd.DataFrame()
 
-    features['ammounts'] = ammounts.apply(lambda x:np.float(x))
-    features = pd.concat([features,pd.get_dummies(accounts)],axis=1)
+    features['ammounts'] = ammounts.apply(lambda x:np.float(x)).values
+    features = pd.concat([features,pd.DataFrame(pd.get_dummies(accounts).values)],axis=1)
 
     return features
 
@@ -151,8 +160,13 @@ def text_features(comments,text_model):
     index,dictionary,lsi = text_model
     
     features_topics_sims=[]
-    
+
+
+    ct=0
+    ce=0
+    c=0
     for comment in comments:
+        c+=1
         try:
             doc = comment.encode('utf-8').split()
             vec_bow = dictionary.doc2bow(doc)
@@ -162,12 +176,21 @@ def text_features(comments,text_model):
             sims = index[vec_lsi]
             
             features_topics_sims.append(sims)
+
+            ct+=1
         
         except:
+            ce+=1
             features_topics_sims.append([-1]*len(sims))
-        
+
+    logger.debug('1 len features {0}'.format(len(features)))
+    logger.debug('1 len features_topics_sims {0}'.format(len(pd.DataFrame(features_topics_sims))))
     
-    features = pd.concat([features,pd.DataFrame(features_topics_sims)],axis=1)
+    features = pd.concat([pd.DataFrame(features.values),pd.DataFrame(features_topics_sims)],axis=1)
+
+    logger.debug('2 len features {0}'.format(len(features)))
+
+    logger.debug('text_features loop, c_try: {0}, c_except: {1}, total: {2}'.format(ct,ce,c))
     
     return features
 
@@ -180,67 +203,137 @@ def features_extraction(comments,accounts,ammounts,dates,
     if data_type is train, then it will create a text_model"""
     
     features = pd.DataFrame()
+
+    logger.debug(len(features))
     
     if train:
         logger.info('creating topic models')
         text_model = create_text_base_models(comments,cats,num_topics)
         
     #extract text features
-    df_text_features = text_features(df.description,text_model)
+    df_text_features = text_features(comments,text_model)
+
+    logger.debug('len text_features: {0}'.format(len(df_text_features)))
     
     #extract money features
     df_money_features = money_features(ammounts,accounts)
     
+    logger.debug('len money_features: {0}'.format(len(df_money_features)))
+
     #extract temporal features
     df_temporal_features = temporal_features(dates)
     
-    features = pd.concat([df_text_features,df_money_features,df_temporal_features],axis=1)
+
+    logger.debug('len temporal_features: {0}'.format(len(df_temporal_features)))
+
+    features = pd.concat([
+        pd.DataFrame(df_text_features.values),
+        pd.DataFrame(df_money_features.values),
+        pd.DataFrame(df_temporal_features.values)],axis=1)
+
+    logger.debug('len all_features: {0}'.format(len(features)))
     
     return features
 
 
-def fit_model(X,y,names,optamise=False, report=True):
-    
+def fit_model_lab(X,y,names,optamise=False, report=False):
+
+    """ This function is for playing around with models for the 
+    primary purpos of doing parameter and model optermisation
+    in the full machine_learning part of the code it may become
+    redudant. However, it offers a platform for experimenting with
+    sklearn and xgboost, as well as hyperparameters.
+
+    X is a array of features 
+    y is a set of labels in the form of a vectorised
+    names are the catgorical names
+
+
+    optamise runs a RandomizedSearchCV over a parameter space
+    note this must be hard coded for each different type of 
+    classifier. The below is setup for xgboost.
+    report presentes a print out of the how well the classifier
+    works in each category as well as plotting confusion_matrixies
+    for test and train.
+
+    """
+
+
     #scale data
-    scaler_data = preprocessing.StandardScaler().fit(X)
-    X_scaled = scaler_data.transform(X)
+    #scaler_data = preprocessing.StandardScaler().fit(X)
+    #X_scaled = scaler_data.transform(X)
 
     #pca decomposition
-    pca = decomposition.PCA(n_components=10).fit(X)
-    X_scaled_pca = scaler_data.transform(X_scaled)
-
-    #test/train split
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled_pca,y, test_size=0.2)
+    #pca = decomposition.PCA(n_components=10).fit(X)
+    #X_scaled_pca = scaler_data.transform(X_scaled)
 
 
-
+    #select classifier
     #clf = sklearn.ensemble.RandomForestClassifier()
     #clf = sklearn.ensemble.ExtraTreesClassifier()
     #clf = sklearn.ensemble.GradientBoostingClassifier()
-    clf = xgb.sklearn.XGBClassifier(learning_rate=0.1,silent=1,n_estimators=1000)
+    clf = xgb.sklearn.XGBClassifier()#learning_rate=0.1,silent=1,n_estimators=1000)
+
+    #create pipline
+    estimators=[ 
+                ('scaler', preprocessing.StandardScaler()),
+                ('reduce_dim', decomposition.PCA()), 
+                ('model', clf)]
+
+    pipline = Pipeline(estimators)
+
+
+    #test/train split
+    X_train, X_test, y_train, y_test = train_test_split(X,y, test_size=0.2)
+
+
+    best_params =  {'model__min_child_weight': 2,
+                                'reduce_dim__n_components': 14,
+                                'model__gamma': 0.22222222222222221,
+                                'model__learning_rate': 0.01,
+                                'model__max_delta_step': 4,
+                                'model__max_depth': 27,
+                                'model__n_estimators': 1000,
+                                'model__subsample': 0.66666666666666663}
+    
+
 
 
     if optamise:
 
-        # specify parameters and distributions to sample from
-        param_dist = {  "learning_rate": [0.5,0.1,], #GBM only
-                        "n_estimators": [500,1000],
-                        "max_depth": [2,4]
-                    }
+        # specify parameters and distributions to sample from 
+
+        params_dist = dict(
+            reduce_dim__n_components=list(np.linspace(2,len(set(y_train)),len(set(y_train))).astype(np.int)),
+            model__n_estimators     =list(np.logspace(1,3,10).astype(np.int)),
+            model__learning_rate    =list(np.linspace(0.01,1.,10)),
+            model__max_depth        =list(np.linspace(1,40,10).astype(np.int)),
+            model__gamma            =np.linspace(0.,1.,10),
+            #model__colsample_bytree =np.linspace(0.1,1.,3),
+            #model__colsample_bylevel=np.linspace(0.1,1.,3),
+            model__max_delta_step   =np.linspace(0,10,10).astype(np.int),
+            model__subsample        =np.linspace(0.,1.,10),
+            model__min_child_weight =np.linspace(0,10,10).astype(np.int)
+            )
 
 
         logger.info('performing grid search')
         #grid = grid_search.RandomizedSearchCV(clf,param_dist,n_jobs=-1,verbose=1,n_iter=10,cv=10)
 
-        grid = grid_search.GridSearchCV(clf,
-                                    param_dist,
-                                    n_jobs=-1,
-                                    verbose=1)#,n_iter=10,cv=10)
+        grid = grid_search.RandomizedSearchCV(
+                                    pipline,
+                                    params_dist,
+                                    n_jobs=1,
+                                    verbose=1,
+                                    n_iter=10000,
+                                    cv=5)
 
         grid.fit(X_train,y_train)
 
         logger.info('best_params: '+str(grid.best_params_))
         logger.info('best_score: '+ str(grid.best_score_))
+
+        grid.best_score_
 
 
         clf_final=grid
@@ -252,9 +345,9 @@ def fit_model(X,y,names,optamise=False, report=True):
 
         logger.info('skipping optamisation phase and fitting model')
 
-        clf.fit(X_train,y_train.ravel())
+        pipline.fit(X_train,y_train.ravel())
 
-        clf_final=clf
+        clf_final=pipline
 
     
 
@@ -266,7 +359,7 @@ def fit_model(X,y,names,optamise=False, report=True):
     logger.info('accuracy_score: (train) {0:.3f}'.format(train_score))   
 
 
-    #print '\ntrain\n',sklearn.metrics.classification_report(y_train, clf_final.predict(X_train))
+    #print '\ntrain\n',sklearn.metrics.classification_report(y_train,clf_final.predict(X_train))
 
     #print '\ntest\n',sklearn.metrics.classification_report(y_test, clf_final.predict(X_test))
 
@@ -356,44 +449,50 @@ def class_report(clf,p,t, plot=True,ttype='unknown'):
 
 
 
+if __name__ == '__main__':  
+    #load in data
+    df_raw = pd.read_csv('~/Documents/Programs/finance_mk2/machine_learning/new_cats_as of_21_210316.csv')
+
+    #rename cols
+    cois = [u'date', u'account', u'description', u'payee', u'new_ammounts', u'new_new_cats']
+    df_raw2 = df_raw[cois]
+    df_raw2.columns =[u'date', u'account', u'description', u'payee', u'ammount',u'category']
+
+        #remove low value cats that will make model fitting hard
+    selection = (df_raw2.category.value_counts() <25).reset_index()
+    low_val_cats = selection[selection.category]['index'].values
+    logger.info('number of transaction removed as less than threshold: {0}'.format(
+            len(df_raw2[df_raw2.category.apply(lambda x:x in low_val_cats)])))
+                
+            
+    df=df_raw2[df_raw2.category.apply(lambda x:x not in low_val_cats)]
+
+
     
-#load in data
-df_raw = pd.read_csv('~/Documents/Programs/finance_mk2/machine_learning/new_cats_as of_21_210316.csv')
 
-#rename cols
-cois = [u'date', u'account', u'description', u'payee', u'new_ammounts', u'new_new_cats']
-df = df_raw[cois]
-df.columns =[u'date', u'account', u'description', u'payee', u'ammount',u'category']
+    #feature creation
+    features = features_extraction(comments=df.description, 
+                                   accounts=df.account, 
+                                   ammounts=df.ammount, 
+                                   dates=df.date, 
+                                   train=True, 
+                                   cats=df.category, 
+                                   text_model=None,
+                                   num_topics=20)
 
-
-from sklearn import ensemble, neighbors, linear_model, grid_search,preprocessing, decomposition
-from sklearn.cross_validation import train_test_split,_num_samples
-import sklearn
-import xgboost as xgb
-from xgboost.sklearn import XGBClassifier
-
-#feature creation
-features = features_extraction(comments=df.description, 
-                               accounts=df.account, 
-                               ammounts=df.ammount, 
-                               dates=df.date, 
-                               train=True, 
-                               cats=df.category, 
-                               text_model=None,
-                               num_topics=20)
-
-#object maps ints to cats or cats to ints
-cat_map, names = cat_mapper(df.category)
+    #object maps ints to cats or cats to ints
+    cat_map, names = cat_mapper(df.category)
 
 
-#sklearn bit
-X = np.array(features.values, dtype=np.float)
-T = np.array(pd.get_dummies(df['category']).values,dtype=np.float)
-t = np.array(df.category.apply(lambda x: cat_map[x]).values,dtype=np.float)
-#t = t.reshape(len(t),1)
+    #sklearn bit
+    X = np.array(features.values, dtype=np.float)
+    T = np.array(pd.get_dummies(df['category']).values,dtype=np.float)
+    t = np.array(df.category.apply(lambda x: cat_map[x]).values,dtype=np.float)
+    #t = t.reshape(len(t),1)
 
-
-clf = fit_model(X,t,names, optamise=False,report=True)
+    logger.debug('len(X): {0}'.format(len(X)))
+    logger.debug('len(t): {0}'.format(len(t)))
+    clf = fit_model_lab(X,t,names, optamise=True,report=True)
 
 
 
